@@ -1,0 +1,178 @@
+import numpy as np
+import matplotlib.pyplot as plt
+
+class ExtendedKalmanFilter:
+    def __init__(self, F, H, Q, R, P0, initial_state):
+        self.F = F
+        self.H = H
+        self.Q = Q
+        self.R = R
+        self.sigma_pred = P0
+        self.x_pred = initial_state
+
+    def state_update(self, x, control_input):
+        w = np.random.normal(0, np.sqrt(self.Q), size=(self.F.shape[1], 1))
+        control_effect = np.array([[0], [control_input]])
+        x_next = self.F @ x + w + control_effect
+        return x_next.reshape(-1, 1)
+
+    def output(self, x):
+        v = np.random.normal(0, np.sqrt(self.R))
+        y = self.H @ x + v
+        return y
+
+    def measurement_update(self, y, x_pred, sigma_pred):
+        residual = y - self.H @ x_pred
+        S = self.H @ sigma_pred @ self.H.T + self.R
+        K = sigma_pred @ self.H.T @ np.linalg.inv(S)
+        x_corrected = x_pred + K @ residual
+        sigma_corrected = sigma_pred - K @ self.H @ sigma_pred
+        return x_corrected, sigma_corrected
+
+    def time_update(self, x_meas_update, sigma_meas_update):
+        x_predicted = self.F @ x_meas_update
+        sigma_predicted = self.F @ sigma_meas_update @ self.F.T + self.Q
+        return x_predicted, sigma_predicted
+
+class ModelPredictiveController:
+    def __init__(self, F, G, H, f, v, W1, W2, x0, desired_control_trajectory):
+        self.F = F
+        self.G = G
+        self.H = H
+        self.f = f
+        self.v = v
+        self.W1 = W1
+        self.W2 = W2
+        self.desired_trajectory = desired_control_trajectory
+        self.n = F.shape[0]
+        self.r = H.shape[0]
+        self.m = G.shape[1]
+        self.currentTimeStep = 0
+        self.states = [x0]
+        self.outputs = []
+        self.inputs = []
+        self.O, self.M, self.gainMatrix = self.computeMatrices()
+
+    def computeMatrices(self):
+        F = self.F
+        G = self.G
+        H = self.H
+        f = self.f
+        v = self.v
+        n = self.n
+        m = self.m
+        r = self.r
+
+        O = np.zeros((f * r, n))
+        for i in range(f):
+            if i == 0:
+                pow_F = np.eye(n)
+            else:
+                pow_F = np.linalg.matrix_power(F, i)
+            O[i*r:(i+1)*r, :] = np.dot(H, pow_F)
+
+        M = np.zeros((f * r, v * m))
+        for i in range(f):
+            for j in range(min(v, i + 1)):
+                if j == 0:
+                    pow_F = np.eye(n)
+                else:
+                    pow_F = np.linalg.matrix_power(F, j)
+                M[i*r:(i+1)*r, (i-j)*m:(i-j+1)*m] = np.dot(H, np.dot(pow_F, G))
+
+        tmp1 = np.dot(M.T, np.dot(self.W2, M))
+        tmp2 = np.linalg.inv(tmp1 + self.W1)
+        gainMatrix = np.dot(tmp2, np.dot(M.T, self.W2))
+
+        return O, M, gainMatrix
+
+    def propagateDynamics(self, controlInput, state):
+        controlInput = controlInput[:self.G.shape[0]]
+        next_state = np.dot(self.F, state) + np.dot(self.G, controlInput)
+        output = np.dot(self.H, state)
+        return next_state, output
+        
+    def computeControlInputs(self, estimated_state):
+        desired_trajectory = self.desired_trajectory[self.currentTimeStep:self.currentTimeStep+self.f]
+        desired_trajectory = np.vstack((desired_trajectory, np.zeros((self.f - len(desired_trajectory), 1))))
+
+        vectorS = desired_trajectory - np.dot(self.O, estimated_state)
+
+        deviation = estimated_state[0] - desired_trajectory[0]
+
+        if abs(deviation) > 2:
+            sign = np.sign(deviation)
+            inputSequenceComputed = np.dot(self.gainMatrix, vectorS) - sign * 2
+        else:
+            inputSequenceComputed = np.dot(self.gainMatrix, vectorS)
+        
+        inputApplied = inputSequenceComputed[0]
+        
+        next_state, output = self.propagateDynamics(inputApplied, self.states[self.currentTimeStep])
+        
+        self.states.append(next_state)
+        self.outputs.append(output)
+        self.inputs.append(inputApplied)
+        self.currentTimeStep += 1
+
+# Define system matrices and initial conditions
+sampling_time = 0.1
+F = np.array([[1, sampling_time], [0, 1]])
+G = np.array([[0.5 * sampling_time**2], [sampling_time]])
+H = np.array([[1, 0]])
+initial_state = np.array([[0], [0]])
+Q = 15
+R = 0.05
+P0 = np.array([[100, 0], [0, 10]])
+
+# Simulation parameters
+desired_position = 40
+f = 50
+v = 3
+W1 = np.eye(3) * 0.1
+desired_control_trajectory = np.random.randn(f, 1)
+W2 = np.eye(f * H.shape[0]) * 0.1
+
+# Initialize Kalman filter and MPC
+ekf = ExtendedKalmanFilter(F, H, Q, R, P0, initial_state)
+mpc = ModelPredictiveController(F, G, H, f, v, W1, W2, initial_state, desired_control_trajectory)
+
+# Simulation parameters
+simulation_time = 100
+time_step = 0.01
+
+# Initialize variables for storing simulation data
+time_stamps = np.arange(0, simulation_time, time_step)
+position_estimates = []
+control_inputs = []
+
+actual_state = np.random.multivariate_normal(initial_state.flatten(), P0).reshape(-1, 1)
+
+for t in time_stamps:
+    actual_state = ekf.state_update(actual_state, 0)
+
+    mpc.computeControlInputs(actual_state)
+
+    position_estimates.append(actual_state[0])
+    control_inputs.append(mpc.inputs[-1][0])
+
+# Plotting
+plt.figure(figsize=(12, 8))
+
+plt.subplot(2, 1, 1)
+plt.plot(time_stamps, position_estimates, label='Estimated Position')
+plt.plot(time_stamps, [desired_position] * len(time_stamps), 'r--', label='Desired Position')
+plt.title('Position Control Simulation')
+plt.xlabel('Time (s)')
+plt.ylabel('Position')
+plt.legend()
+
+plt.subplot(2, 1, 2)
+plt.plot(time_stamps, control_inputs, label='Control Input')
+plt.title('Control Input Over Time')
+plt.xlabel('Time (s)')
+plt.ylabel('Control Input')
+plt.legend()
+
+plt.tight_layout()
+plt.show()
