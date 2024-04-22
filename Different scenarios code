@@ -1,0 +1,115 @@
+import numpy as np
+import matplotlib.pyplot as plt
+
+
+Ts = 1.0  # Time step (in seconds)
+
+
+num_steps = 100
+
+
+z_t = 0  
+v_t = 0  
+alpha1_t = 1  
+bias_barometer_t = 0 
+
+# Initial state vector
+x_t = np.array([z_t, v_t, alpha1_t, bias_barometer_t])
+
+# Initial state covariance matrix
+P_t = np.eye(4) * 0.1 
+
+# Process noise covariance matrix (Q)
+Q = np.diag([0.1, 0.1, 0.01, 0.01]) 
+
+# Measurement noise covariance matrix (R)
+R = np.diag([0.1, 0.1, 0.1])  
+
+# State transition matrix (A)
+A = np.array([
+    [1, Ts, 0, 0],
+    [0, 1, Ts, 0],
+    [0, 0, 1, 0],
+    [0, 0, 0, 1]
+])
+
+# Observation matrix (H)
+H = np.array([
+    [1, 0, 0, 0],
+    [1, 0, 0, 1],
+    [1, 0, 0, 0]
+])
+
+# Storing the state estimates
+state_history = []
+
+# Storing the measurement history
+measurement_history = []
+
+
+for step in range(num_steps):
+    # (i): ToF sensor step change
+    if step == 30:
+        R[1, 1] *= 10  # Increase measurement noise for ToF sensor
+        x_t[0] += 5  # Simulate step change in altitude
+
+    # (ii): GNSS sensor outage
+    if 50 <= step <= 60:
+        R[0, 0] *= 100  # Increase measurement noise for GNSS sensor
+
+    # (iii): Battery drains gradually
+    if step >= 70:
+        x_t[2] -= 0.005  # Decrease alpha1 slowly
+        Q[2, 2] += 0.001  # Increase process noise for alpha1
+
+    # (iv): Slow change in the bias of the barometer
+    if step >= 80:
+        x_t[3] += 0.1  # Increase bias slowly
+        Q[3, 3] += 0.001  # Increase process noise for bias
+
+    # Kalman filter prediction step
+    x_t = A @ x_t
+    P_t = A @ P_t @ A.T + Q
+
+    # Simulate measurements with noise
+    measurement_noise = np.random.multivariate_normal(np.zeros(3), R)
+    measurement = H @ x_t + measurement_noise
+
+    # Kalman filter update step
+    S_t = H @ P_t @ H.T + R
+    K_t = P_t @ H.T @ np.linalg.inv(S_t)
+    x_t = x_t + K_t @ (measurement - H @ x_t)
+    P_t = (np.eye(4) - K_t @ H) @ P_t
+
+    # Store the state and measurement
+    state_history.append(x_t.copy())
+    measurement_history.append(measurement)
+
+# Convert history lists to arrays for plotting
+state_history = np.array(state_history)
+measurement_history = np.array(measurement_history)
+
+# Plot the results
+plt.figure(figsize=(12, 8))
+
+# Plot altitude estimate
+plt.subplot(2, 1, 1)
+plt.plot(state_history[:, 0], label='Altitude Estimate')
+plt.plot(measurement_history[:, 0], label='GNSS Measurement', linestyle='dashed')
+plt.plot(measurement_history[:, 1], label='ToF Measurement', linestyle='dashed')
+plt.title('Altitude Estimate and Measurements')
+plt.xlabel('Time Step')
+plt.ylabel('Altitude')
+plt.legend()
+
+# Plot alpha1 estimate
+plt.subplot(2, 1, 2)
+plt.plot(state_history[:, 2], label='Alpha1 Estimate')
+plt.title('Alpha1 Estimate Over Time')
+plt.xlabel('Time Step')
+plt.ylabel('Alpha1')
+plt.legend()
+
+plt.tight_layout()
+plt.show()
+
