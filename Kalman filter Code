@@ -1,0 +1,80 @@
+import numpy as np
+import matplotlib.pyplot as plt
+
+class MyKalmanFilter:
+    def __init__(self, A_mat, G_mat, C_mat, Q_val, R_val, P0_mat, initial_state):
+        self.A_mat = A_mat
+        self.G_mat = G_mat
+        self.C_mat = C_mat
+        self.Q_val = Q_val
+        self.R_val = R_val
+        self.sigma_pred = P0_mat
+        self.state_pred = initial_state
+
+    def state_update(self, state):
+        process_noise = np.random.normal(0, np.sqrt(self.Q_val))
+        next_state = np.dot(self.A_mat, state) + process_noise * self.G_mat
+        return next_state.reshape(-1, 1)
+
+    def output(self, state):
+        measurement_noise = np.random.normal(0, np.sqrt(self.R_val))
+        output_measurement = np.dot(self.C_mat, state) + measurement_noise
+        return output_measurement
+
+    def measurement_update(self, measurement, state_pred, sigma_pred):
+        F = np.dot(np.dot(self.C_mat, sigma_pred), self.C_mat.T) + self.R_val
+        measurement_error = measurement - np.dot(self.C_mat, state_pred)
+        K = np.dot(np.dot(sigma_pred, self.C_mat.T), np.linalg.inv(F))
+        state_corrected = state_pred + np.dot(K, measurement_error)
+        sigma_corrected = sigma_pred - np.dot(np.dot(K, self.C_mat), sigma_pred)
+        return state_corrected, sigma_corrected
+
+    def time_update(self, state_meas_update, sigma_meas_update):
+        state_predicted = np.dot(self.A_mat, state_meas_update)
+        sigma_predicted = np.dot(np.dot(self.A_mat, sigma_meas_update), self.A_mat.T) + self.Q_val * np.dot(self.G_mat, self.G_mat.T)
+        return state_predicted, sigma_predicted
+
+# Define system matrices and initial conditions
+sampling_interval = 0.1
+A_mat = np.array([[1, sampling_interval], [0, 1]])
+G_mat = np.array([[0.5 * sampling_interval**2], [sampling_interval]])
+C_mat = np.array([[1, 0]])
+P0_mat = np.array([[100, 0], [0, 10]])
+Q_val = 10
+R_val = 0.01
+initial_state = np.array([[0], [0]])
+
+my_kf = MyKalmanFilter(A_mat, G_mat, C_mat, Q_val, R_val, P0_mat, initial_state)
+
+# Simulation parameters
+simulation_duration = 80
+actual_state_history = np.zeros((simulation_duration + 1, 2))
+corrected_state_history = np.zeros((simulation_duration, 2))
+
+actual_state = np.random.multivariate_normal(initial_state.flatten(), P0_mat).reshape(-1, 1)
+actual_state_history[0, :] = actual_state.T
+
+for t in range(simulation_duration):
+    # Generate output measurement
+    output_measurement = my_kf.output(actual_state)
+
+    # Measurement update
+    corrected_state, corrected_sigma = my_kf.measurement_update(output_measurement, my_kf.state_pred, my_kf.sigma_pred)
+    corrected_state_history[t, :] = corrected_state.T
+
+    # Time update
+    state_predicted, sigma_predicted = my_kf.time_update(corrected_state, corrected_sigma)
+
+    # State update
+    actual_state = my_kf.state_update(actual_state)
+    actual_state_history[t + 1, :] = actual_state.T
+
+# Plotting
+time_axis = np.arange(simulation_duration + 1) * sampling_interval
+plt.plot(time_axis[:-1], corrected_state_history[:, 0], label="Corrected Position")
+plt.plot(time_axis, actual_state_history[:, 0], label="Actual Position", alpha=0.5)
+plt.xlabel("Time (s)")
+plt.ylabel("Position (m)")
+plt.grid()
+plt.legend()
+plt.show()
